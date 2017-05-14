@@ -18,7 +18,7 @@ import psycopg2
 log = logging.getLogger(name=__file__)
 
 
-class DataIO: 
+class LocalDataIO: 
 
 	today_str = str(date.today()).replace("-", "")
 	file_dir = dirname(abspath(__file__))

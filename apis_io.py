@@ -40,7 +40,8 @@ class CommonAPIs:
 			for row in csv.reader(csv_file):
 				print ", ".join(row)
 
-# RESTAPI 
+# RESTful API
+
 
 # Github API 
 
