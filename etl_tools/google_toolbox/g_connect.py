@@ -12,9 +12,11 @@ from oauth2client.file import Storage
 from oauth2client.service_account import ServiceAccountCredentials
 # https://developers.google.com/identity/protocols/OAuth2ServiceAccount
 # https://github.com/burnash/gspread/blob/c0a5a6d83083c467a647ab91bf1caaa1f829b5c7/tests/test.py
+from functools import wraps, partial
+from apiclient.http import MediaIoBaseDownload
 
 
-class Google_API_Connect:
+class GoogleAPIConnect:
 	try:
 		import argparse
 		flags, unknown_flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_known_args()
@@ -79,19 +81,22 @@ class Google_API_Connect:
 
 		return service, drive_service
 
-	# Added Function #
-	# @classmethod
-	# def google_sheet_connect(cls, spreadsheetId, rangeName, access='r'):
-	def google_sheet_connect(self, spreadsheetId, rangeName, access='r'):
+	@classmethod
+	def google_sheet_connect(cls, spreadsheetId, rangeName, access='r'):
 		if access == 'w':
-			print("Can't chnage to write privilege yet. Sorry :(")
+			print("Can't change to write privilege yet. Sorry :(")
 			return
 
-		# result = cls.gsht_service.spreadsheets().values().get(
-		result = self.gsht_service.spreadsheets().values().get(
+		result = cls.gsht_service.spreadsheets().values().get(
 			spreadsheetId=spreadsheetId, range=rangeName).execute()
 		return result
 
+
+class GoogleAPIFunction(GoogleAPIConnect):
+	def __init__(self):
+		super()
+
+	# Added Function #
 	def gsht_update_body_builder(self, sheet_title_string):
 		# https://developers.google.com/sheets/api/guides/batchupdate
 		# Config Sheet Properties
@@ -170,6 +175,42 @@ class Google_API_Connect:
 			print(e)
 
 
+hook_dict = {}
+def function_hook(prefunction):
+	def function_decorator(function):
+		hook_dict[prefunction.__name__] = function.__name__
+		@wraps(prefunction)
+		def wrapper(*args, **kwargs):
+			return function(prefunction(*args, **kwargs))
+		return wrapper
+	return function_decorator
+
+
+@function_hook(Google_API_Connect.gsht_update_body_builder)
+def func(request_body):
+	request_body['requests'][0]['addSheet']['properties']["gridProperties"] = {
+		"frozenRowCount": 1
+	}
+
+	return request_body
+
+for fcn, func in hook_dict.items():
+	fcn = func
+	# Google_API_Connect.gsht_update_body_builder = func
+
+
+def google_drive_download(drive_service):
+	# Download Files
+	file_id = '1lpOFpru54DTiCuV8bfAKVrHFTa9f3h7x'
+	request = drive_service.files().get_media(fileId=file_id)
+	fh = io.BytesIO()
+	downloader = MediaIoBaseDownload(fh, request)
+	done = False
+	while done is False:
+		status, done = downloader.next_chunk()
+		print("Download %d%%." % int(status.progress() * 100))
+
+
 def main():
 	"""Shows basic usage of the Sheets API.
 
@@ -177,12 +218,18 @@ def main():
 	students in a sample spreadsheet:
 	https://docs.google.com/spreadsheets/d/1f9qY7VW8mwIopLVJzmKKzTD8Qxxt33rcJOrbH-Yx-bs/edit#gid=0
 	"""
-	gsht = Google_API_Connect()
+	gsht = GoogleAPIConnect()
 	service = gsht.gsht_service
 	# drive_service = gsht.gdrv_service
 
-	spreadsheetId = '____'
-	rangeName = 'Sheet2!A2:E'
+	spreadsheetId = '1U0LsfdZlv217Di9h65P4IFAu--3qHEL2owQhlvcWM-w'
+	rangeName = 'Sheet1'
+
+	# Get sample data
+
+
+
+
 	result = service.spreadsheets().values().get(
 		spreadsheetId=spreadsheetId, range=rangeName).execute()
 	values = result.get('values', [])
@@ -211,3 +258,5 @@ def main():
 
 if __name__ == '__main__':
 	main()
+
+# https://bl.ocks.org/mbostock/4063550
