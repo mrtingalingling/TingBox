@@ -7,13 +7,17 @@ import httplib2
 import os
 
 from apiclient import discovery
-from oauth2client import client, tools
+from googleapiclient.discovery import build
+from httplib2 import Http
+from oauth2client import file, client, tools
+
 from oauth2client.file import Storage
 from oauth2client.service_account import ServiceAccountCredentials
 # https://developers.google.com/identity/protocols/OAuth2ServiceAccount
 # https://github.com/burnash/gspread/blob/c0a5a6d83083c467a647ab91bf1caaa1f829b5c7/tests/test.py
 from functools import wraps, partial
 from apiclient.http import MediaIoBaseDownload
+import io, csv, logging, sys, traceback
 
 
 class GoogleAPIConnect:
@@ -25,69 +29,43 @@ class GoogleAPIConnect:
 
 	# If modifying these scopes, delete your previously saved credentials
 	# at ~/.credentials/sheets.googleapis.com-python-quickstart.json
-	SCOPES = 'https://www.googleapis.com/auth/spreadsheets'  # .readonly'
+	SHEET_SCOPES = 'https://www.googleapis.com/auth/spreadsheets'  # .readonly'
 	DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive'
 	CLIENT_SECRET_FILE = 'client_secret.json'
 	APPLICATION_NAME = 'GoogleSheet_DB_Sync'
 
 	def __init__(self):
-		self.gsht_service, self.gdrv_service = self.check_credentials()
+		self.gsht_service, self.gdrv_service = self.get_credentials()
 
 	def get_credentials(self):
-		"""Gets valid user credentials from storage.
+		# The file token.json stores the user's access and refresh tokens, and is
+		# created automatically when the authorization flow completes for the first
+		# time.
+		sheet_store = file.Storage('sheet_token.json')
+		drive_store = file.Storage('drive_token.json')
+		sheet_creds = sheet_store.get()
+		drive_creds = drive_store.get()
+		if not sheet_creds or sheet_creds.invalid:
+			sheet_flow = client.flow_from_clientsecrets('credentials.json', self.SHEET_SCOPES)
+			sheet_creds = tools.run_flow(sheet_flow, sheet_store)
+		if not drive_creds or drive_creds.invalid:
+			drive_flow = client.flow_from_clientsecrets('credentials.json', self.DRIVE_SCOPES)
+			drive_creds = tools.run_flow(drive_flow, drive_store)
+		sheet_service = build('sheets', 'v4', http=sheet_creds.authorize(Http()))
+		drive_service = build('drive', 'v3', http=drive_creds.authorize(Http()))
 
-		If nothing has been stored, or if the stored credentials are invalid,
-		the OAuth2 flow is completed to obtain the new credentials.
-
-		Returns:
-			Credentials, the obtained credential.
-		"""
-		home_dir = os.path.expanduser('~')
-		credential_dir = os.path.join(home_dir, '.credentials')
-		if not os.path.exists(credential_dir):
-			os.makedirs(credential_dir)
-		credential_path = os.path.join(credential_dir, 'sheets.googleapis.com-python-db-sync.json')
-
-		store = Storage(credential_path)
-		credentials = store.get()
-		if not credentials or credentials.invalid:
-			flow = client.flow_from_clientsecrets(self.CLIENT_SECRET_FILE, self.SCOPES)
-			flow.user_agent = self.APPLICATION_NAME
-			if self.flags:
-				credentials = tools.run_flow(flow, store, self.flags)
-			else:  # Needed only for compatibility with Python 2.6
-				credentials = tools.run(flow, store)
-			print('Storing credentials to ' + credential_path)
-		return credentials
-
-	def check_credentials(self):
-		if 'user' in self.unknown_flags:
-			credentials = self.get_credentials()
-			http = credentials.authorize(httplib2.Http())
-			discoveryUrl = ('https://sheets.googleapis.com/$discovery/rest?' 'version=v4')
-			service = discovery.build('sheets', 'v4', http=http, discoveryServiceUrl=discoveryUrl)
-			drive_service = discovery.build('drive', 'v3', http=http)
-		else:
-			try:
-				SERVICE_ACCOUNT_FILE = '.json'
-				credentials = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, self.SCOPES)
-				drive_credentials = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, self.DRIVE_SCOPES)
-				service = discovery.build('sheets', 'v4', credentials=credentials)
-				drive_service = discovery.build('drive', 'v3', credentials=drive_credentials)
-				# service = discovery.build('sheets', 'v4', developerKey=api_key)
-			except Exception as e:
-				print(e)
-				return None
-
-		return service, drive_service
+		return sheet_service, drive_service
 
 	@classmethod
-	def google_sheet_connect(cls, spreadsheetId, rangeName, access='r'):
+	def google_sheet_read(cls, spreadsheetId, rangeName, access='r'):
 		if access == 'w':
 			print("Can't change to write privilege yet. Sorry :(")
 			return
 
-		result = cls.gsht_service.spreadsheets().values().get(
+		gsht_service = cls().gsht_service
+		# gdrv_service = cls().gdrv_service
+
+		result = gsht_service.spreadsheets().values().get(
 			spreadsheetId=spreadsheetId, range=rangeName).execute()
 		return result
 
@@ -175,33 +153,42 @@ class GoogleAPIFunction(GoogleAPIConnect):
 			print(e)
 
 
-hook_dict = {}
-def function_hook(prefunction):
-	def function_decorator(function):
-		hook_dict[prefunction.__name__] = function.__name__
-		@wraps(prefunction)
-		def wrapper(*args, **kwargs):
-			return function(prefunction(*args, **kwargs))
+from functools import wraps, partial
+
+
+class DecorableHooks:
+
+	@classmethod
+	def hook_func(prefunction):
+		def decorator_func(cls, f):
+			'''Add custom function to the decorator_dict, example hook name: f.__name__ + _hook'''
+			cls.decorator_dict = {}
+			# @hook_func
+
+			def wrapper(*args, **kwds):
+				print('Add custom function the decorator_dict')
+				cls.decorator_dict = {prefunction.__name__: f}
+				return f(*args, **kwds)
+			return wrapper
+		return decorator_func
+
+	@classmethod
+	def decorable(cls, f):
+		'''Add customization to decorable function result'''
+		cls.decorator_dict
+		# @decorable
+
+		@wraps(f)
+		def wrapper(*args, **kwds):
+			if f.__name__ in cls.decorator_dict.keys().split('_hook')[0]:
+				return cls.decorator_dict[f.__name__](f(*args, **kwds))
+			else:
+				print(f.__name__, ' is not implemented because the decorated function is not found, please check again.')
 		return wrapper
-	return function_decorator
 
 
-@function_hook(Google_API_Connect.gsht_update_body_builder)
-def func(request_body):
-	request_body['requests'][0]['addSheet']['properties']["gridProperties"] = {
-		"frozenRowCount": 1
-	}
-
-	return request_body
-
-for fcn, func in hook_dict.items():
-	fcn = func
-	# Google_API_Connect.gsht_update_body_builder = func
-
-
-def google_drive_download(drive_service):
+def google_drive_download(drive_service, file_id='1lpOFpru54DTiCuV8bfAKVrHFTa9f3h7x'):
 	# Download Files
-	file_id = '1lpOFpru54DTiCuV8bfAKVrHFTa9f3h7x'
 	request = drive_service.files().get_media(fileId=file_id)
 	fh = io.BytesIO()
 	downloader = MediaIoBaseDownload(fh, request)
@@ -209,6 +196,7 @@ def google_drive_download(drive_service):
 	while done is False:
 		status, done = downloader.next_chunk()
 		print("Download %d%%." % int(status.progress() * 100))
+	return fh.getvalue()
 
 
 def main():
@@ -218,42 +206,40 @@ def main():
 	students in a sample spreadsheet:
 	https://docs.google.com/spreadsheets/d/1f9qY7VW8mwIopLVJzmKKzTD8Qxxt33rcJOrbH-Yx-bs/edit#gid=0
 	"""
-	gsht = GoogleAPIConnect()
-	service = gsht.gsht_service
-	# drive_service = gsht.gdrv_service
+	google_api = GoogleAPIConnect()
+	drive_service = google_api.gdrv_service
+	# sheet_service = google_api.gsht_service
 
 	spreadsheetId = '1U0LsfdZlv217Di9h65P4IFAu--3qHEL2owQhlvcWM-w'
 	rangeName = 'Sheet1'
 
 	# Get sample data
+	downloaded_file = google_drive_download(drive_service)
 
+	# value_input_option = 'USER_ENTERED'
+	# value_range_body = {'values': [['hahaha', '5678'], ['lolol']]}
+	# request = service.spreadsheets().values().update(spreadsheetId=spreadsheetId, range=rangeName, valueInputOption=value_input_option, body=value_range_body)
+	# response = request.execute()
+	# print(response)
 
+	# result = sheet_service.spreadsheets().values().get(
+	# 	spreadsheetId=spreadsheetId, range=rangeName).execute()
+	# values = result.get('values', [])
 
-
-	result = service.spreadsheets().values().get(
-		spreadsheetId=spreadsheetId, range=rangeName).execute()
-	values = result.get('values', [])
-
-	if not values:
-		print('No data found.')
-	else:
-		print('Name, Major:')
-		max_row_size = 1
-		for row in values:
-			max_row_size = len(row) if len(row) > max_row_size else max_row_size
-			if len(row) == 0:
-				continue
-			for rn in range(max_row_size):
-				if rn > len(row):
-					row[rn] = ''
-			# Print columns A and E, which correspond to indices 0 and 4.
-			print('%s, %s' % (row[0], row[4]))
-
-	value_input_option = 'USER_ENTERED'
-	value_range_body = {'values': [['hahaha', '5678'], ['lolol']]}
-	request = service.spreadsheets().values().update(spreadsheetId=spreadsheetId, range=rangeName, valueInputOption=value_input_option, body=value_range_body)
-	response = request.execute()
-	print(response)
+	# if not values:
+	# 	print('No data found.')
+	# else:
+	# 	print('Name, Major:')
+	# 	max_row_size = 1
+	# 	for row in values:
+	# 		max_row_size = len(row) if len(row) > max_row_size else max_row_size
+	# 		if len(row) == 0:
+	# 			continue
+	# 		for rn in range(max_row_size):
+	# 			if rn > len(row):
+	# 				row[rn] = ''
+	# 		# Print columns A and E, which correspond to indices 0 and 4.
+	# 		print('%s, %s' % (row[0], row[4]))
 
 
 if __name__ == '__main__':
