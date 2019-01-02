@@ -18,6 +18,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from functools import wraps, partial
 from apiclient.http import MediaIoBaseDownload
 import io, csv, logging, sys, traceback
+import pandas as pd
 
 
 class GoogleAPIConnect:
@@ -215,6 +216,10 @@ def main():
 
 	# Get sample data
 	downloaded_file = google_drive_download(drive_service)
+	data = [line.split(',') for line in downloaded_file.decode('utf-8').splitlines()]
+	df = pd.DataFrame(data[1:],columns=data[0])
+	print(df)
+
 
 	# value_input_option = 'USER_ENTERED'
 	# value_range_body = {'values': [['hahaha', '5678'], ['lolol']]}
